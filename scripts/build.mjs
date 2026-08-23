@@ -30,7 +30,27 @@ function growth(now, prev) {
 async function main() {
   const prices = await readJson('data/prices.json');
   if (!prices) {
-    console.error('data/prices.json 이 없습니다. npm run sync:prices 를 먼저 실행하세요.');
+    /*
+     * 시세 수집이 실패했을 때.
+     *
+     * 이미 만들어 둔 data/stocks.json 이 있으면 그것을 그대로 둔다. 배포가
+     * 통째로 멈춰 사이트가 404 가 되는 것보다, 지난번 자료(또는 예시 자료)로
+     * 떠 있는 편이 낫기 때문이다. 예시 자료에는 sample: true 가 붙어 있어
+     * 화면 위에 빨간 경고 띠가 뜬다 — 조용히 옛 값을 진짜인 척 보여 주지 않는다.
+     *
+     * 아무것도 없으면 만들 수 있는 게 없으므로 그때는 실패한다.
+     */
+    const existing = await readJson('data/stocks.json');
+    if (existing) {
+      console.warn(
+        [
+          'data/prices.json 이 없습니다 — 시세 수집이 실패했거나 아직 돌지 않았습니다.',
+          `기존 data/stocks.json 을 그대로 둡니다 (${existing.count ?? '?'}종목, ${existing.sample ? '예시 데이터' : existing.date + ' 기준'}).`,
+        ].join('\n'),
+      );
+      return;
+    }
+    console.error('data/prices.json 도 data/stocks.json 도 없습니다. npm run sync:prices 나 npm run sample 을 먼저 실행하세요.');
     process.exit(1);
   }
   const fin = await readJson('data/financials.json');

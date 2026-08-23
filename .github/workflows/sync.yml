@@ -18,9 +18,20 @@ concurrency:
   group: pages
   cancel-in-progress: true
 
+# ── 수집이 실패해도 배포는 한다 ──────────────────────────
+# 시세 수집이 죽으면 워크플로 전체가 멈춰 사이트가 404 로 남는다. 그래서 수집
+# 단계는 continue-on-error 로 두고, 빌드가 기존 data/stocks.json 을 그대로
+# 내보내게 했다(없으면 저장소에 커밋된 예시 자료가 그 자리에 있다).
+#
+# 대신 맨 뒤에 report 잡을 두어, 수집이 실패했으면 배포가 끝난 뒤 실행을
+# 빨갛게 만든다. 안 그러면 몇 달째 옛 자료가 떠 있는데 뱃지는 초록인 상태가 된다.
+
 jobs:
   sync:
     runs-on: ubuntu-latest
+    outputs:
+      krx: ${{ steps.krx.outcome }}
+      dart: ${{ steps.dart.outcome }}
     steps:
       - uses: actions/checkout@v4
 
@@ -41,13 +52,14 @@ jobs:
           restore-keys: stock-cache-
 
       - name: 시세 수집 (KRX)
+        id: krx
+        continue-on-error: true
         run: node scripts/sync-prices.mjs
         env:
           KRX_API_KEY: ${{ secrets.KRX_API_KEY }}
 
-      # 재무는 없어도 사이트가 도니 실패해도 배포를 막지 않는다.
-      # (키를 아직 안 넣었거나 DART 가 잠깐 죽었을 때 전체가 멈추면 곤란하다.)
       - name: 재무·배당 수집 (DART)
+        id: dart
         continue-on-error: true
         run: node scripts/sync-financials.mjs
         env:
@@ -56,6 +68,24 @@ jobs:
 
       - name: stocks.json 빌드
         run: node scripts/build.mjs
+
+      - name: 수집 결과 요약
+        run: |
+          {
+            echo "### 수집 결과"
+            echo ""
+            echo "| 단계 | 결과 |"
+            echo "| --- | --- |"
+            echo "| 시세 (KRX) | ${{ steps.krx.outcome }} |"
+            echo "| 재무 (DART) | ${{ steps.dart.outcome }} |"
+            echo ""
+            if [ "${{ steps.krx.outcome }}" != "success" ]; then
+              echo "> 시세 수집이 실패해 **기존 data/stocks.json 을 그대로 배포**했습니다."
+              echo "> 저장소에 커밋된 것은 예시 자료라, 사이트에 빨간 경고 띠가 뜹니다."
+              echo "> \`KRX_API_KEY\` 시크릿이 등록돼 있는지 확인하세요."
+            fi
+            node -e "const d=require('./data/stocks.json');console.log('');console.log('배포 대상: '+d.count+'종목 · '+(d.sample?'예시 데이터':d.date+' 기준'));"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: 배포 아티팩트 준비
         # prices.json / financials.json 은 build 의 입력일 뿐이라 배포하지 않는다.
@@ -92,3 +122,22 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # 배포는 끝났지만 수집이 실패했으면 실행을 빨갛게 남긴다.
+  # 초록 뱃지 뒤에서 자료가 조용히 늙는 것을 막는 장치다.
+  report:
+    needs: [sync, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: 수집 실패 여부 확인
+        run: |
+          echo "시세(KRX): ${{ needs.sync.outputs.krx }}"
+          echo "재무(DART): ${{ needs.sync.outputs.dart }}"
+          if [ "${{ needs.sync.outputs.krx }}" != "success" ]; then
+            echo "::error::시세 수집(KRX)이 실패했습니다. 사이트는 기존 자료로 배포됐습니다."
+            exit 1
+          fi
+          if [ "${{ needs.sync.outputs.dart }}" != "success" ]; then
+            echo "::warning::재무 수집(DART)이 실패했습니다. PER·PBR·ROE 칸이 빕니다."
+          fi
