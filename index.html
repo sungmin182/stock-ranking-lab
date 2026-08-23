@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>주식 랭킹 랩</title>
+    <meta name="description" content="KRX·DART 공개 데이터를 내가 정한 기준으로 다시 정렬하는 주식 비교 도구" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+    />
+    <link rel="stylesheet" href="assets/style.css" />
+  </head>
+  <body>
+    <!-- ── 고지 ────────────────────────────────────────────
+         이 줄은 접을 수 없다. 투자 판단은 이 도구가 하지 않는다는 것을
+         화면에 항상 남겨 두기 위해서다. -->
+    <div class="notice" id="notice">
+      <strong>투자 조언이 아닙니다.</strong>
+      공개된 공시·시세 자료를 정리해 비교하는 도구입니다. 어떤 종목도 추천하지 않으며,
+      값이 틀릴 수 있습니다. 투자 판단과 그 결과는 본인의 몫입니다.
+    </div>
+
+    <!-- 예시 데이터로 돌고 있을 때만 뜬다 (data/stocks.json 의 sample: true) -->
+    <div class="notice danger" id="sampleNotice" hidden>
+      <strong>지어낸 예시 데이터입니다.</strong>
+      화면 확인용으로 만든 가짜 회사·가짜 숫자입니다. 실재하는 회사가 아닙니다.
+      <code>npm run sync</code> 로 진짜 자료를 받으면 이 띠가 사라집니다.
+    </div>
+
+    <header class="topbar">
+      <a class="brand" id="homeLink" href="./" title="처음 화면으로 (필터·정렬 초기화)">
+        <span class="brand-mark" aria-hidden="true">
+          <span class="bar"></span><span class="bar"></span>
+          <span class="bar"></span><span class="bar"></span>
+        </span>
+        <span class="brand-text">
+          <h1>주식 랭킹 랩</h1>
+          <span class="stamp" id="stamp">불러오는 중…</span>
+        </span>
+      </a>
+      <div class="topbar-actions">
+        <label class="search-field">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="6"/><path d="M13.5 13.5 L18 18"/></svg>
+          <input id="search" type="search" placeholder="종목명 · 종목코드 검색" autocomplete="off" />
+          <kbd>/</kbd>
+        </label>
+        <button id="themeToggle" class="theme-btn" title="화면 모드">
+          <span class="theme-icon">◐</span>
+          <span class="theme-label">시스템</span>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <!-- 넓은 화면에서는 좌측(점수·필터) / 우측(결과) 두 칸으로 나뉜다.
+           1180px 아래에서는 위아래로 쌓인다. -->
+      <div class="workspace" id="workspace">
+        <aside class="sidebar" id="sidebar">
+          <!-- ── 나만의 랭킹 점수 ───────────────────────────── -->
+          <section class="panel" id="scorePanel">
+            <div class="panel-head">
+              <h2>
+                <button class="collapse-btn" data-panel="score" aria-expanded="true" aria-controls="scoreBody">
+                  <span class="chev" aria-hidden="true">▾</span>
+                </button>
+                <span class="eyebrow">01</span>나만의 랭킹 점수
+                <span class="panel-summary" id="scoreSummary"></span>
+              </h2>
+              <div class="presets" id="presets"></div>
+            </div>
+            <div class="panel-body" id="scoreBody">
+              <div class="sliders" id="sliders"></div>
+              <p class="hint">
+                가중치를 조절하면 표가 실시간으로 다시 정렬됩니다. 음수로 내리면 그 특성이
+                <em>적을수록</em> 높은 점수를 받습니다. 예: 규모를 &minus;로 두면 아직 안 알려진
+                작은 회사가 위로 올라옵니다.
+              </p>
+            </div>
+          </section>
+
+          <!-- ── 필터 ────────────────────────────────────────── -->
+          <section class="panel" id="filterPanel">
+            <div class="panel-head">
+              <h2>
+                <button class="collapse-btn" data-panel="filter" aria-expanded="true" aria-controls="filterBody">
+                  <span class="chev" aria-hidden="true">▾</span>
+                </button>
+                <span class="eyebrow">02</span>필터
+                <span class="panel-summary" id="filterSummary"></span>
+              </h2>
+              <button id="resetFilters" class="ghost-btn">필터 초기화</button>
+            </div>
+
+            <div class="panel-body" id="filterBody">
+              <div class="filter-grid">
+                <div class="field">
+                  <label>시장 <span class="sub" id="marketLabel">전체</span></label>
+                  <div class="chips" id="marketChips"></div>
+                </div>
+
+                <div class="field">
+                  <label>시가총액(억원) <span class="sub" id="capLabel">전체</span></label>
+                  <div class="dual" id="capRange"></div>
+                  <div class="chips" id="capChips"></div>
+                </div>
+
+                <div class="field">
+                  <label>PER <span class="sub" id="perLabel">전체</span></label>
+                  <div class="dual" id="perRange"></div>
+                  <div class="chips" id="perChips"></div>
+                </div>
+
+                <div class="field">
+                  <label>PBR <span class="sub" id="pbrLabel">전체</span></label>
+                  <div class="dual" id="pbrRange"></div>
+                  <div class="chips" id="pbrChips"></div>
+                </div>
+
+                <div class="field">
+                  <label>ROE(%) <span class="sub" id="roeLabel">전체</span></label>
+                  <div class="dual" id="roeRange"></div>
+                  <div class="chips" id="roeChips"></div>
+                </div>
+
+                <div class="field">
+                  <label>배당수익률(%) <span class="sub" id="divLabel">전체</span></label>
+                  <div class="dual" id="divRange"></div>
+                  <div class="chips" id="divChips"></div>
+                </div>
+
+                <div class="field">
+                  <label>부채비율(%) <span class="sub" id="debtLabel">전체</span></label>
+                  <div class="dual" id="debtRange"></div>
+                  <div class="chips" id="debtChips"></div>
+                </div>
+
+                <div class="field">
+                  <label>주가(원) <span class="sub" id="priceLabel">전체</span></label>
+                  <div class="dual" id="priceRange"></div>
+                </div>
+
+                <div class="field">
+                  <label>업종</label>
+                  <div class="tagbox" id="sectorBox"></div>
+                </div>
+
+                <div class="field">
+                  <label>내 목록 <span class="sub" id="listLabel">전체</span></label>
+                  <div class="chips" id="listChips"></div>
+                </div>
+
+                <div class="field">
+                  <label>기타</label>
+                  <label class="check">
+                    <input type="checkbox" id="profitOnly" />
+                    <span title="당기순이익이 0보다 큰 종목만">적자 기업 빼기</span>
+                  </label>
+                  <label class="check">
+                    <input type="checkbox" id="divOnly" />
+                    <span>배당을 준 종목만</span>
+                  </label>
+                  <label class="check">
+                    <input type="checkbox" id="commonOnly" checked />
+                    <span title="우선주는 의결권이 없고 거래량이 적어 비교가 어긋납니다">우선주 빼기</span>
+                  </label>
+                  <label class="check">
+                    <input type="checkbox" id="risingOnly" />
+                    <span>최근 3개월 오른 종목만</span>
+                  </label>
+                  <label class="check">
+                    <input type="checkbox" id="myListOnly" />
+                    <span>관심·보유 전부</span>
+                  </label>
+                  <label class="check">
+                    <input type="checkbox" id="hideExcluded" checked />
+                    <span>제외 표시한 종목 숨기기</span>
+                  </label>
+                  <div class="excluded-note" id="excludedNote" hidden></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </aside>
+
+        <!-- ── 결과 ──────────────────────────────────────────── -->
+        <section class="panel results">
+          <div class="panel-head">
+            <h2>
+              <button
+                id="sidebarToggle"
+                class="icon-btn"
+                title="점수·필터 패널 접기 / 펼치기"
+                aria-label="점수·필터 패널 접기"
+              >☰</button>
+              <span class="eyebrow">03</span>결과
+              <span class="count-badge" id="resultCount">–</span>
+            </h2>
+            <div class="result-actions">
+              <div class="seg" id="viewMode" role="group" aria-label="보기 방식">
+                <button data-view="table" class="on">표</button>
+                <button data-view="cards">카드</button>
+              </div>
+              <label class="check inline">
+                <input type="checkbox" id="showNotes" />
+                <span title="내 평가 · 보유 수량 · 평가손익 열">내 기록</span>
+              </label>
+              <label class="check inline">
+                <input type="checkbox" id="compactMode" />
+                <span>간결히</span>
+              </label>
+              <button id="myFolio" class="ghost-btn">내 포트폴리오</button>
+              <button id="copyLink" class="ghost-btn">링크 복사</button>
+              <button id="exportCsv" class="ghost-btn">CSV 내보내기</button>
+            </div>
+          </div>
+
+          <div class="table-wrap" id="tableWrap">
+            <table id="table">
+              <thead>
+                <tr id="headRow"></tr>
+              </thead>
+              <tbody id="tbody"></tbody>
+            </table>
+            <div id="cards" class="card-grid" hidden></div>
+            <div id="empty" class="empty" hidden>조건에 맞는 종목이 없습니다.</div>
+            <div id="sentinel" class="sentinel" hidden>더 불러오는 중…</div>
+          </div>
+
+          <div class="result-foot">
+            <span id="shownCount" class="sub">–</span>
+            <button id="toTop" class="ghost-btn" hidden>맨 위로 ↑</button>
+          </div>
+        </section>
+      </div>
+    </main>
+
+    <div id="drawer" class="drawer" hidden></div>
+
+    <!-- 비교 담기 바 / 비교 화면 -->
+    <div id="compareBar" class="compare-bar" hidden></div>
+    <div id="compareView" class="compare-view" hidden></div>
+
+    <!-- 내 기록 요약 (보유·관심·평가손익·백업) -->
+    <div id="folioView" class="compare-view" hidden></div>
+
+    <div id="modal" class="modal" hidden></div>
+    <div id="toast" class="toast" hidden></div>
+
+    <script src="assets/config.js"></script>
+    <script type="module" src="assets/app.js"></script>
+  </body>
+</html>

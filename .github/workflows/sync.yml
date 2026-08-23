@@ -1,0 +1,94 @@
+name: 데이터 동기화 & 배포
+
+on:
+  schedule:
+    # KRX 일별매매정보는 장 마감(15:30 KST) 뒤에 확정된다. 넉넉히 저녁에 돈다.
+    # 10:00 UTC = 19:00 KST. 주말·공휴일은 휴장이라 평일에만 돌린다.
+    - cron: '0 10 * * 1-5'
+  workflow_dispatch: # 수동 실행 버튼
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # 과거 날짜의 시세는 다시 바뀌지 않고, 재무제표는 분기에 한 번만 바뀐다.
+      # 캐시를 재사용해 매일 KRX·DART 를 처음부터 다시 때리지 않도록 한다.
+      # (DART 는 하루 20,000건 한도가 있어 2,600종목 배당 조회를 매일 하면 아깝다.)
+      - name: 캐시 복원
+        uses: actions/cache@v4
+        with:
+          path: |
+            cache/prices
+            cache/dart
+          key: stock-cache-${{ github.run_id }}
+          restore-keys: stock-cache-
+
+      - name: 시세 수집 (KRX)
+        run: node scripts/sync-prices.mjs
+        env:
+          KRX_API_KEY: ${{ secrets.KRX_API_KEY }}
+
+      # 재무는 없어도 사이트가 도니 실패해도 배포를 막지 않는다.
+      # (키를 아직 안 넣었거나 DART 가 잠깐 죽었을 때 전체가 멈추면 곤란하다.)
+      - name: 재무·배당 수집 (DART)
+        continue-on-error: true
+        run: node scripts/sync-financials.mjs
+        env:
+          DART_API_KEY: ${{ secrets.DART_API_KEY }}
+          CONCURRENCY: '3'
+
+      - name: stocks.json 빌드
+        run: node scripts/build.mjs
+
+      - name: 배포 아티팩트 준비
+        # prices.json / financials.json 은 build 의 입력일 뿐이라 배포하지 않는다.
+        #
+        # GitHub Pages 는 자산에 max-age=600 을 붙인다. 배포 직후 10분 동안
+        # 새 index.html 과 캐시된 옛 app.js 가 섞여 기능이 깨질 수 있으므로,
+        # 배포마다 자산 주소에 버전을 붙여 확실히 새로 받게 한다.
+        #
+        # data/stocks.json 은 여기서 건드리지 않는다. app.js 가 자기 주소의
+        # ?v= 를 읽어 데이터 주소에도 같은 번호를 붙이기 때문이다.
+        run: |
+          mkdir -p _site/data
+          cp index.html _site/
+          cp -r assets _site/
+          cp data/stocks.json _site/data/
+          STAMP="${{ github.run_id }}"
+          sed -i \
+            -e "s|assets/style\.css|assets/style.css?v=$STAMP|g" \
+            -e "s|assets/config\.js|assets/config.js?v=$STAMP|g" \
+            -e "s|assets/app\.js|assets/app.js?v=$STAMP|g" \
+            _site/index.html
+          grep -o 'assets/[a-z]*\.[a-z]*?v=[0-9]*' _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: sync
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
