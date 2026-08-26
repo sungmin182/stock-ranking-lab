@@ -133,14 +133,51 @@ function dumpKeys(label, rows) {
   console.log(`[${label}] 첫 줄:`, JSON.stringify(rows[0]).slice(0, 400), '\n');
 }
 
+/**
+ * 오류를 사람이 읽을 수 있는 한 줄로 바꾼다.
+ *
+ * KRX 는 401 을 두 가지 뜻으로 쓴다. 둘을 구별해 주지 않으면 "키를 넣었는데
+ * 왜 401 이냐"에서 한참 헤맨다. 실제로 여기서 헤맸다.
+ *
+ *   Unauthorized Key       키 자체가 없거나 틀렸다
+ *   Unauthorized API Call  키는 맞는데 이 API 를 쓸 권한이 그 키에 없다
+ *                          (KRX 는 인증키 발급과 API 별 사용 승인이 따로다)
+ */
+function explain(err) {
+  const body = err.body ?? '';
+  if (err.status === 401 && body.includes('Unauthorized API Call')) {
+    return '이 API 를 쓸 권한이 인증키에 없습니다 — openapi.krx.co.kr 에서 해당 서비스 사용 신청이 승인됐는지 확인하세요 (인증키 발급과 별개입니다)';
+  }
+  if (err.status === 401) return '인증키가 없거나 틀렸습니다 (KRX_API_KEY 확인)';
+  return err.message.split('\n')[0];
+}
+
 async function main() {
   const today = new Map();
   const info = new Map();
   let baseDate = null;
 
+  /*
+   * 시장 하나가 막혀도 나머지는 받는다.
+   *
+   * KRX 는 API 별로 사용 승인이 따로 나기 때문에, 코스피는 승인됐는데 코넥스는
+   * 아직인 상태가 실제로 생긴다. 그때 전체를 죽이면 다 승인될 때까지 아무것도
+   * 못 본다. 코넥스는 종목 수도 얼마 안 되므로 없어도 사이트는 멀쩡하다.
+   * 단 하나도 못 받았을 때만 실패한다.
+   */
+  const skipped = [];
+
   for (const market of MARKETS) {
     console.log(`${market.id} 최근 거래일 시세…`);
-    const { dd, rows } = await fetchNearestTradingDay(market, new Date());
+    let dd;
+    let rows;
+    try {
+      ({ dd, rows } = await fetchNearestTradingDay(market, new Date()));
+    } catch (err) {
+      console.warn(`  건너뜀 — ${explain(err)}`);
+      skipped.push(market.id);
+      continue;
+    }
     dumpKeys(`${market.id} 시세`, rows);
     baseDate ??= dd;
     for (const raw of rows) {
@@ -160,10 +197,29 @@ async function main() {
       }
       console.log(`  기본정보 ${list.length.toLocaleString('ko-KR')}건`);
     } catch (err) {
-      console.warn(`  기본정보 실패(건너뜀): ${err.message.split('\n')[0]}`);
+      console.warn(`  기본정보 건너뜀 — ${explain(err)}`);
     }
     await sleep(200);
   }
+
+  if (!today.size) {
+    console.error(
+      [
+        '',
+        '시세를 한 종목도 받지 못했습니다.',
+        `막힌 시장: ${skipped.join(', ') || '(없음)'}`,
+        '',
+        'KRX 는 인증키 발급과 API 별 사용 승인이 따로입니다.',
+        'openapi.krx.co.kr 에 로그인해 아래 서비스가 "승인" 상태인지 확인하세요.',
+        '  · 유가증권 일별매매정보 (stk_bydd_trd)',
+        '  · 코스닥 일별매매정보 (ksq_bydd_trd)',
+        '  · 종목기본정보 (stk_isu_base_info / ksq_isu_base_info)',
+        '',
+      ].join('\n'),
+    );
+    process.exit(1);
+  }
+  if (skipped.length) console.log(`\n건너뛴 시장: ${skipped.join(', ')} — 나머지로 진행합니다\n`);
 
   // ── 과거 스냅샷 ────────────────────────────────────────
   const history = {};
@@ -172,6 +228,8 @@ async function main() {
     console.log(`${back}일 전(${ymd(target)}) 스냅샷…`);
     const snap = new Map();
     for (const market of MARKETS) {
+      // 오늘 것도 못 받은 시장은 과거도 못 받는다. 401 을 세 번 더 맞을 이유가 없다.
+      if (skipped.includes(market.id)) continue;
       try {
         const { rows } = await fetchNearestTradingDay(market, target);
         for (const raw of rows) {
@@ -179,7 +237,7 @@ async function main() {
           if (r.code && r.close) snap.set(r.code, r.close);
         }
       } catch (err) {
-        console.warn(`  ${market.id} 건너뜀: ${err.message.split('\n')[0]}`);
+        console.warn(`  ${market.id} 건너뜀 — ${explain(err)}`);
       }
       await sleep(200);
     }
