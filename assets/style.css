@@ -179,6 +179,24 @@
   box-sizing: border-box;
 }
 
+/*
+ * hidden 속성이 항상 이기게 한다.
+ *
+ * hidden 은 브라우저 기본 스타일시트의 [hidden] { display: none } 으로 동작하는데,
+ * 작성자 스타일시트의 규칙이 기본 규칙을 이긴다. 그래서 .modal { display: flex }
+ * 처럼 display 를 지정한 순간 그 요소의 hidden 이 무력화된다.
+ *
+ * 실제로 #modal 이 z-index 95 로 화면 전체를 덮은 채 모든 클릭을 먹고 있었다.
+ * 화면에는 어두운 그림자가 깔리고 버튼이 하나도 안 눌렸다. drawer·toast·
+ * compareBar·cards 도 같은 상태였다. compare-view 만 멀쩡했는데, 그 클래스에는
+ * display 를 안 줬기 때문이다.
+ *
+ * 개별 규칙마다 [hidden] 예외를 다는 대신 여기 한 줄로 막는다.
+ */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
