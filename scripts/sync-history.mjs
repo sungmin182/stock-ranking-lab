@@ -48,23 +48,34 @@ const PACE_MS = Number(process.env.PACE_MS ?? 700);
 
 requireKey('npm run sync:history');
 
-/** 오래된 것부터 오늘까지, 되돌아볼 일수 목록 */
+/**
+ * 되돌아볼 일수 목록. **가까운 날부터** 돌려준다.
+ *
+ * 한 실행에서 받을 수 있는 지점이 정해져 있어(MAX_NEW_FETCHES) 순서가 곧
+ * 우선순위다. 오래된 것부터 받았더니 첫 수집에서 2021~2024 구간만 차고
+ * 정작 궁금한 최근 반년이 비었다. 가까운 날부터 채우면 한 번만 돌려도
+ * 쓸 만한 차트가 나오고, 먼 과거는 다음 실행들이 이어서 메운다.
+ */
 function lookbackDays() {
   const days = new Set();
   for (let w = 0; w <= WEEKLY_WEEKS; w++) days.add(w * 7);
   // 주 단위 구간이 끝나는 달의 다음 달부터 월 단위로 이어 붙인다
   const firstMonth = Math.ceil((WEEKLY_WEEKS * 7) / 30) + 1;
   for (let m = firstMonth; m < firstMonth + MONTHLY_MONTHS; m++) days.add(m * 30);
-  return [...days].sort((a, b) => b - a); // 오래된 것부터
+  return [...days].sort((a, b) => a - b); // 오늘에 가까운 것부터
 }
 
 async function main() {
   const days = lookbackDays();
   console.log(`지점 ${days.length}개 (최근 ${WEEKLY_WEEKS}주는 주 단위, 그 이전 ${MONTHLY_MONTHS}개월은 월 단위)`);
 
-  const dates = [];
-  /** code → 지점별 종가 (빠진 날은 null) */
-  const series = new Map();
+  /*
+   * 날짜(YYYY-MM-DD) → code → 종가.
+   *
+   * 받는 순서(가까운 날부터)와 화면에 그릴 순서(오래된 날부터)가 반대라,
+   * 모아 두었다가 마지막에 한 번 정렬해 편다.
+   */
+  const byDate = new Map();
   const skipped = new Set();
 
   let fetched = 0; // 이번 실행에서 실제로 KRX 를 때린 횟수
@@ -108,29 +119,27 @@ async function main() {
     }
 
     if (!snap.size) continue;
-    dates.push(label ? `${label.slice(0, 4)}-${label.slice(4, 6)}-${label.slice(6)}` : ymd(target));
-    const at = dates.length - 1;
-    for (const [code, close] of snap) {
-      if (!series.has(code)) series.set(code, []);
-      const arr = series.get(code);
-      while (arr.length < at) arr.push(null); // 아직 상장 전이면 앞이 빈다
-      arr[at] = close;
-    }
+    byDate.set(label ? `${label.slice(0, 4)}-${label.slice(4, 6)}-${label.slice(6)}` : ymd(target), snap);
     if ((i + 1) % 10 === 0 || i === days.length - 1) {
-      process.stdout.write(`\r  ${dates.length} / ${days.length} 지점 · ${series.size.toLocaleString('ko-KR')}종목`);
+      process.stdout.write(`\r  ${byDate.size} / ${days.length} 지점`);
     }
   }
   process.stdout.write('\n');
 
-  if (!dates.length) {
+  if (!byDate.size) {
     console.error('과거 시세를 한 지점도 받지 못했습니다. KRX 인증키와 API 활용 승인을 확인하세요.');
     process.exit(1);
   }
 
-  // 길이를 맞춘다. 중간에 상장폐지된 종목은 뒤가 빈다.
+  // 화면에 그릴 순서(오래된 날부터)로 펴 놓는다
+  const dates = [...byDate.keys()].sort();
+  const codes = new Set();
+  for (const snap of byDate.values()) for (const code of snap.keys()) codes.add(code);
+
   const stocks = {};
-  for (const [code, arr] of series) {
-    while (arr.length < dates.length) arr.push(null);
+  for (const code of codes) {
+    // 상장 전이면 앞이, 상장폐지면 뒤가 빈다
+    const arr = dates.map((d) => byDate.get(d).get(code) ?? null);
     // 값이 두 개도 안 되면 선을 그릴 수 없다
     if (arr.filter((v) => v != null).length >= 2) stocks[code] = arr;
   }
