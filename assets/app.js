@@ -13,6 +13,9 @@
 
 const CONFIG = window.SL_CONFIG ?? {};
 
+/** 주식 용어 사전 (assets/terms.js). 없으면 설명만 안 뜨고 나머지는 그대로 돈다. */
+const TERMS = window.SL_TERMS ?? {};
+
 /**
  * 배포 번호. 배포 스크립트가 index.html 을 `assets/app.js?v=<번호>` 로 바꾸므로
  * 여기서 그 번호를 되읽을 수 있다. 데이터 주소에도 같은 번호를 붙인다 —
@@ -71,6 +74,93 @@ function signed(v, digits = 2, suffix = '%') {
   return el('span', { className: cls, textContent: `${mark}${nf(v, digits)}${suffix}` });
 }
 
+/* ── 용어 설명 ────────────────────────────────────────────
+ * 지표 이름에 점선 밑줄을 달고, 누르면 뜻·읽는 법·함정을 띄운다.
+ * 표 머리글·슬라이더 축·상세 패널이 전부 같은 사전(assets/terms.js)을 본다.
+ *
+ * 설명을 따로 떼어 둔 화면(용어 사전)도 있지만, 사람은 대개 숫자를 보다가
+ * "이게 뭐지?" 하고 궁금해한다. 그래서 숫자 옆에서 바로 열리는 쪽을 기본으로 뒀다. */
+
+/** 용어 이름에 붙이는 점선 밑줄. 사전에 없는 말이면 그냥 글자로 둔다. */
+function termLink(key, label) {
+  const t = TERMS[key];
+  if (!t) return el('span', { textContent: label ?? key });
+  const node = el('button', {
+    className: 'term',
+    textContent: label ?? t.name,
+    title: `${t.short} — 눌러서 자세히`,
+    type: 'button',
+  });
+  node.onclick = (e) => {
+    e.stopPropagation();
+    openTerm(key);
+  };
+  return node;
+}
+
+function termBody(t) {
+  return [
+    el('p', { className: 'term-short', textContent: t.short }),
+    t.calc ? el('p', { className: 'term-calc', textContent: t.calc }) : null,
+    t.how ? el('div', { className: 'term-block' }, el('h5', { textContent: '어떻게 읽나' }), el('p', { textContent: t.how })) : null,
+    t.trap
+      ? el('div', { className: 'term-block trap' }, el('h5', { textContent: '이것만 보면 틀리는 곳' }), el('p', { textContent: t.trap }))
+      : null,
+  ];
+}
+
+function openTerm(key) {
+  const t = TERMS[key];
+  if (!t) return;
+  const modal = $('#modal');
+  const close = el('button', { className: 'ghost-btn', textContent: '닫기' });
+  close.onclick = () => (modal.hidden = true);
+  const all = el('button', { className: 'ghost-btn', textContent: '용어 사전 전체' });
+  all.onclick = () => {
+    modal.hidden = true;
+    openGlossary();
+  };
+  setChildren(
+    modal,
+    el(
+      'div',
+      { className: 'modal-box term-box' },
+      el('h4', { textContent: t.name }),
+      ...termBody(t),
+      el('div', { className: 'modal-actions' }, all, close),
+    ),
+  );
+  modal.hidden = false;
+  modal.onclick = (e) => {
+    if (e.target === modal) modal.hidden = true;
+  };
+}
+
+function openGlossary() {
+  const close = el('button', { className: 'ghost-btn', textContent: '닫기' });
+  close.onclick = () => ($('#glossaryView').hidden = true);
+
+  const cards = Object.entries(TERMS).map(([key, t]) =>
+    el('div', { className: 'folio-section term-card', id: `term-${key}` }, el('h4', { textContent: t.name }), el('div', { className: 'term-card-body' }, ...termBody(t))),
+  );
+
+  setChildren(
+    $('#glossaryView'),
+    el(
+      'div',
+      { className: 'view-inner' },
+      el('div', { className: 'view-head' }, el('h3', { textContent: '주식 용어' }), close),
+      el('p', {
+        className: 'hint',
+        textContent:
+          '이 사이트에 나오는 숫자들이 무슨 뜻인지 모아 두었습니다. 각 항목의 “이것만 보면 틀리는 곳”이 핵심입니다 — 지표 하나로 좋고 나쁨을 가릴 수 있는 종목은 없습니다. 무엇을 사고팔지는 이 사이트가 말하지 않습니다.',
+      }),
+      ...cards,
+    ),
+  );
+  $('#glossaryView').hidden = false;
+}
+
 /* ── 점수 축 정의 ─────────────────────────────────────────
  * value(s) 는 "클수록 좋다"는 방향으로 맞춘 원시값을 돌려준다.
  * 실제 점수는 이 값들의 백분위에 가중치를 곱해 더한 것이다.
@@ -81,6 +171,7 @@ function signed(v, digits = 2, suffix = '%') {
 const AXES = [
   {
     key: 'value',
+    term: 'per',
     label: '저PER',
     note: '이익 대비 싼가. 낮을수록 높은 점수',
     // 로그를 쓰는 이유: PER 5와 10의 차이가 100과 105의 차이보다 크다
@@ -88,18 +179,21 @@ const AXES = [
   },
   {
     key: 'asset',
+    term: 'pbr',
     label: '저PBR',
     note: '순자산 대비 싼가. 낮을수록 높은 점수',
     value: (s) => (s.pbr > 0 ? -Math.log10(s.pbr) : null),
   },
   {
     key: 'roe',
+    term: 'roe',
     label: '수익성',
     note: 'ROE — 자기자본으로 얼마를 벌었나',
     value: (s) => s.roe,
   },
   {
     key: 'divy',
+    term: 'divYield',
     label: '배당',
     note: '배당수익률. 배당이 없는 회사는 0으로 친다',
     /*
@@ -114,30 +208,35 @@ const AXES = [
   },
   {
     key: 'safe',
+    term: 'debt',
     label: '안정성',
     note: '부채비율이 낮을수록 높은 점수',
     value: (s) => (s.debt == null ? null : -s.debt),
   },
   {
     key: 'grow',
+    term: 'revenue',
     label: '성장성',
     note: '매출 증가율(전년 대비)',
     value: (s) => s.revGrowth,
   },
   {
     key: 'mom',
+    term: 'momentum',
     label: '모멘텀',
     note: '최근 3개월 주가 수익률',
     value: (s) => s.ret?.[90],
   },
   {
     key: 'size',
+    term: 'cap',
     label: '규모',
     note: '시가총액(로그). −로 두면 소형주 발굴',
     value: (s) => (s.cap ? Math.log10(s.cap) : null),
   },
   {
     key: 'liq',
+    term: 'value',
     label: '거래활발',
     note: '거래대금(로그). −로 두면 거래가 적은 종목',
     value: (s) => (s.value ? Math.log10(s.value) : null),
@@ -420,8 +519,12 @@ const SORT_VALUE = {
   divYield: (s) => s.divYield,
   debt: (s) => s.debt,
   revGrowth: (s) => s.revGrowth,
+  ret7: (s) => s.ret?.[7],
+  ret30: (s) => s.ret?.[30],
   ret90: (s) => s.ret?.[90],
+  ret180: (s) => s.ret?.[180],
   ret365: (s) => s.ret?.[365],
+  ret1825: (s) => s.ret?.[1825],
   // 내 기록에서 나오는 값들
   mine: (s) => noteOf(s.code)?.rating,
   qty: (s) => noteOf(s.code)?.qty || null,
@@ -433,23 +536,29 @@ const SORT_VALUE = {
  * 기록이 없으면 전부 '–' 라 표만 넓어지기 때문이다.
  * 기록이 하나라도 있으면 처음부터 켜진다(main 참고).
  */
+/*
+ * term 은 머리글에 뜨는 설명(툴팁)에 쓴다. 머리글 자체는 눌러서 정렬하는
+ * 버튼이라 그 안에 또 누를 것을 넣지 않았다 — 자세한 설명은 상세 패널의
+ * 지표 이름이나 '주식 용어' 화면에서 본다.
+ */
 const COLUMNS = [
-  { key: 'score', label: '점수' },
-  { key: 'capRank', label: '시총순위' },
+  { key: 'score', label: '점수', term: 'score' },
+  { key: 'capRank', label: '시총순위', term: 'cap' },
   { key: 'name', label: '종목', left: true },
   { key: 'mine', label: '내 평가', mine: true },
   { key: 'qty', label: '보유', mine: true },
   { key: 'pl', label: '평가손익', mine: true },
   { key: 'close', label: '주가' },
-  { key: 'changePct', label: '등락률' },
-  { key: 'cap', label: '시가총액' },
-  { key: 'per', label: 'PER' },
-  { key: 'pbr', label: 'PBR' },
-  { key: 'roe', label: 'ROE' },
-  { key: 'divYield', label: '배당률' },
-  { key: 'debt', label: '부채비율' },
-  { key: 'revGrowth', label: '매출성장' },
-  { key: 'ret90', label: '3개월' },
+  { key: 'changePct', label: '등락률', term: 'momentum' },
+  { key: 'cap', label: '시가총액', term: 'cap' },
+  { key: 'per', label: 'PER', term: 'per' },
+  { key: 'pbr', label: 'PBR', term: 'pbr' },
+  { key: 'roe', label: 'ROE', term: 'roe' },
+  { key: 'divYield', label: '배당률', term: 'divYield' },
+  { key: 'debt', label: '부채비율', term: 'debt' },
+  { key: 'revGrowth', label: '매출성장', term: 'revenue' },
+  { key: 'ret90', label: '3개월', term: 'momentum' },
+  { key: 'ret365', label: '1년', term: 'momentum' },
 ];
 
 const visibleColumns = () => COLUMNS.filter((c) => !c.mine || state.showNotes);
@@ -716,6 +825,9 @@ function renderRow(s) {
       case 'ret90':
         td = el('td', {}, signed(s.ret?.[90], 1));
         break;
+      case 'ret365':
+        td = el('td', {}, signed(s.ret?.[365], 1));
+        break;
       default:
         td = cell('–');
     }
@@ -781,9 +893,10 @@ function renderHead() {
     row,
     visibleColumns().map((col) => {
       const on = state.sort.key === col.key;
+      const t = col.term ? TERMS[col.term] : null;
       const th = el(
         'th',
-        { className: col.left ? 'left' : '' },
+        { className: col.left ? 'left' : '', title: t ? `${t.name} — ${t.short}` : '' },
         el('span', { textContent: col.label }),
         on ? el('span', { className: 'dir', textContent: state.sort.dir === -1 ? '▼' : '▲' }) : null,
       );
@@ -937,6 +1050,207 @@ function openCompare() {
   $('#compareView').hidden = false;
 }
 
+/* ── 가격 차트 ────────────────────────────────────────────
+ * data/history.json 은 종목마다 81개 지점(최근 반년은 주 단위, 그 이전 5년은
+ * 월 단위)의 종가를 담고 있다. 파일이 1MB 남짓이라 첫 화면에서 같이 받으면
+ * 표가 뜨는 게 늦어진다. 그래서 상세 패널을 처음 열 때 한 번만 받는다. */
+let historyData = null;
+let historyPromise = null;
+
+function loadHistory() {
+  if (historyData) return Promise.resolve(historyData);
+  historyPromise ??= fetch(versioned(CONFIG.HISTORY_URL ?? 'data/history.json'))
+    .then((r) => (r.ok ? r.json() : null))
+    .catch(() => null)
+    .then((d) => (historyData = d ?? { dates: [], stocks: {} }));
+  return historyPromise;
+}
+
+const svgEl = (tag, attrs = {}) => {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', tag);
+  for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+  return node;
+};
+
+/** 차트에서 고를 수 있는 구간. days 는 되돌아볼 일수. */
+const CHART_RANGES = [
+  { label: '6개월', days: 183 },
+  { label: '1년', days: 365 },
+  { label: '3년', days: 1095 },
+  { label: '5년', days: 1830 },
+];
+
+const chartRangeKey = 'sl.chartRange';
+
+/**
+ * 한 종목의 종가 흐름을 그린다.
+ *
+ * 선 색은 구간 첫 값 대비 마지막 값으로 정한다 — 한국 관례대로 오르면 빨강,
+ * 내리면 파랑. 세로축은 그 구간의 최저~최고에 맞춰 늘린다(0부터 그리면
+ * 대부분의 종목이 화면 위쪽에 눌린 직선으로 보인다).
+ */
+function drawChart(dates, values, host) {
+  const W = 640;
+  const H = 190;
+  const padT = 14;
+  const padB = 24;
+  const padL = 8;
+  const padR = 58;
+
+  const known = values.map((v, i) => [i, v]).filter(([, v]) => v != null);
+  if (known.length < 2) {
+    setChildren(host, el('p', { className: 'hint', textContent: '이 구간에 그릴 값이 없습니다.' }));
+    return;
+  }
+
+  const lo = Math.min(...known.map(([, v]) => v));
+  const hi = Math.max(...known.map(([, v]) => v));
+  const span = hi - lo || hi || 1;
+  const x = (i) => padL + (i / (values.length - 1)) * (W - padL - padR);
+  const y = (v) => padT + (1 - (v - lo) / span) * (H - padT - padB);
+
+  const first = known[0][1];
+  const last = known[known.length - 1][1];
+  const rising = last >= first;
+  const stroke = rising ? 'var(--up)' : 'var(--down)';
+
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'pricechart', preserveAspectRatio: 'none' });
+
+  // 최고/최저 안내선
+  for (const [v, label] of [[hi, '최고'], [lo, '최저']]) {
+    svg.append(svgEl('line', { x1: padL, x2: W - padR, y1: y(v), y2: y(v), class: 'grid' }));
+    const t = svgEl('text', { x: W - padR + 6, y: y(v) + 4, class: 'axis' });
+    t.textContent = `${nf(v)}`;
+    svg.append(t);
+    const t2 = svgEl('text', { x: W - padR + 6, y: y(v) + 15, class: 'axis dim' });
+    t2.textContent = label;
+    svg.append(t2);
+  }
+
+  // 값이 빠진 구간에서 선을 끊는다 (상장 전이거나 거래정지)
+  let d = '';
+  let pen = false;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (v == null) {
+      pen = false;
+      continue;
+    }
+    d += `${pen ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)} `;
+    pen = true;
+  }
+  // 면은 이어진 구간에만 채운다
+  const f0 = known[0][0];
+  const f1 = known[known.length - 1][0];
+  const area = `M${x(f0).toFixed(1)} ${(H - padB).toFixed(1)} ` + d.replace(/^M/, 'L') + `L${x(f1).toFixed(1)} ${(H - padB).toFixed(1)} Z`;
+  svg.append(svgEl('path', { d: area, class: 'area', fill: stroke }));
+  svg.append(svgEl('path', { d: d.trim(), class: 'line', stroke }));
+
+  // 양끝 날짜
+  const dateText = (i, anchor) => {
+    const t = svgEl('text', { x: x(i), y: H - 6, class: 'axis', 'text-anchor': anchor });
+    t.textContent = (dates[i] ?? '').slice(0, 7);
+    return t;
+  };
+  svg.append(dateText(f0, 'start'), dateText(f1, 'end'));
+
+  // 마우스를 올린 지점 표시
+  const hoverLine = svgEl('line', { class: 'hover-line', y1: padT, y2: H - padB, x1: 0, x2: 0, opacity: 0 });
+  const hoverDot = svgEl('circle', { class: 'hover-dot', r: 3.5, cx: 0, cy: 0, fill: stroke, opacity: 0 });
+  svg.append(hoverLine, hoverDot);
+
+  const readout = el('div', { className: 'chart-readout' });
+  const setReadout = (i) => {
+    const v = values[i];
+    if (v == null) return;
+    const pct = ((v - first) / first) * 100;
+    setChildren(
+      readout,
+      el('span', { className: 'when', textContent: dates[i] }),
+      el('span', { className: 'what', textContent: won(v) }),
+      signed(pct, 1),
+      el('span', { className: 'sub', textContent: '구간 시작 대비' }),
+    );
+  };
+  setReadout(f1);
+
+  svg.onmousemove = (e) => {
+    const r = svg.getBoundingClientRect();
+    const rel = ((e.clientX - r.left) / r.width) * W;
+    // 값이 있는 지점 중 가장 가까운 것으로 붙는다
+    let best = known[0][0];
+    for (const [i] of known) if (Math.abs(x(i) - rel) < Math.abs(x(best) - rel)) best = i;
+    hoverLine.setAttribute('x1', x(best));
+    hoverLine.setAttribute('x2', x(best));
+    hoverLine.setAttribute('opacity', 1);
+    hoverDot.setAttribute('cx', x(best));
+    hoverDot.setAttribute('cy', y(values[best]));
+    hoverDot.setAttribute('opacity', 1);
+    setReadout(best);
+  };
+  svg.onmouseleave = () => {
+    hoverLine.setAttribute('opacity', 0);
+    hoverDot.setAttribute('opacity', 0);
+    setReadout(f1);
+  };
+
+  setChildren(host, svg, readout);
+}
+
+/** 상세 패널의 차트 구역 (구간 칩 + 그림). 데이터는 열릴 때 받아 온다. */
+function chartSection(s) {
+  const host = el('div', { className: 'chart-host' }, el('p', { className: 'hint', textContent: '차트를 불러오는 중…' }));
+  const chips = el('div', { className: 'chips' });
+  let range = Number(localStorage.getItem(chartRangeKey)) || 365;
+
+  const render = () => {
+    const h = historyData;
+    if (!h?.dates?.length) {
+      setChildren(host, el('p', { className: 'hint', textContent: '과거 종가 자료가 아직 없습니다. npm run sync:history 로 받을 수 있습니다.' }));
+      return;
+    }
+    const series = h.stocks?.[s.code];
+    if (!series) {
+      setChildren(host, el('p', { className: 'hint', textContent: '이 종목의 과거 종가가 없습니다(최근 상장이면 그럴 수 있습니다).' }));
+      return;
+    }
+    // dates 는 오래된 것부터다. 구간에 드는 뒷부분만 자른다.
+    const cutoff = Date.now() - range * 86400000;
+    let from = h.dates.findIndex((d) => Date.parse(d) >= cutoff);
+    if (from < 0) from = 0;
+    // 점이 너무 적으면 구간을 넓힌다
+    if (h.dates.length - from < 3) from = Math.max(0, h.dates.length - 3);
+    drawChart(h.dates.slice(from), series.slice(from), host);
+  };
+
+  for (const r of CHART_RANGES) {
+    const btn = el('button', { textContent: r.label });
+    btn.classList.toggle('on', r.days === range);
+    btn.onclick = (e) => {
+      e.stopPropagation();
+      range = r.days;
+      localStorage.setItem(chartRangeKey, String(range));
+      for (const b of chips.children) b.classList.toggle('on', b.textContent === r.label);
+      render();
+    };
+    chips.append(btn);
+  }
+
+  loadHistory().then(render);
+
+  return el(
+    'div',
+    { className: 'dsection' },
+    el('h4', {}, el('span', { textContent: '주가 흐름' }), chips),
+    host,
+    el('p', {
+      className: 'hint',
+      textContent:
+        '최근 반년은 주 단위, 그 이전은 월 단위 종가입니다. 수정주가가 아니라서 액면분할·무상증자가 있었던 종목은 그 지점에서 선이 뚝 끊긴 것처럼 보입니다.',
+    }),
+  );
+}
+
 /* ── 상세 서랍 ────────────────────────────────────────── */
 const drawerMax = () => Math.min(window.innerWidth - 60, 900);
 
@@ -970,21 +1284,41 @@ function drawerResizer() {
   return handle;
 }
 
+/** k 에는 글자 대신 termLink() 가 만든 조각을 넣어도 된다 */
 function specRow(k, v, note) {
   return el(
     'div',
     { className: 'spec-row' },
-    el('span', { className: 'k', textContent: k }),
+    el('span', { className: 'k' }, typeof k === 'string' ? el('span', { textContent: k }) : k),
     el('span', { className: 'v' }, typeof v === 'string' ? el('span', { textContent: v }) : v, note ? el('small', { textContent: note }) : null),
   );
 }
 
+/*
+ * 화면에서 보여 주는 기간들.
+ *
+ * 1일은 KRX 가 주는 당일 등락률을 그대로 쓴다 — 전 거래일 시세를 따로 받을
+ * 이유가 없다. 나머지는 sync-prices.mjs 가 그 날짜의 종가를 받아 계산해 둔 값.
+ *
+ * max 는 막대를 채울 기준 폭이다. 기간마다 정상 범위가 달라 하나로 두면
+ * 1일 막대는 늘 붙어 있고 5년 막대는 늘 끝까지 찬다.
+ */
+const RET_PERIODS = [
+  { label: '1일', get: (s) => s.changePct, max: 10 },
+  { label: '7일', get: (s) => s.ret?.[7], max: 15 },
+  { label: '1개월', get: (s) => s.ret?.[30], max: 30 },
+  { label: '3개월', get: (s) => s.ret?.[90], max: 60 },
+  { label: '6개월', get: (s) => s.ret?.[180], max: 80 },
+  { label: '1년', get: (s) => s.ret?.[365], max: 120 },
+  { label: '5년', get: (s) => s.ret?.[1825], max: 300 },
+];
+
 /** 0을 가운데 두고 양쪽으로 뻗는 수익률 막대 */
-function retBar(label, v) {
+function retBar(label, v, max = 60) {
   const track = el('div', { className: 'track' });
   if (v != null && Number.isFinite(v)) {
-    // ±60%를 양끝으로 본다. 그보다 큰 값은 끝에 붙는다.
-    const ratio = Math.min(Math.abs(v) / 60, 1) * 50;
+    // ±max 를 양끝으로 본다. 그보다 큰 값은 끝에 붙는다.
+    const ratio = Math.min(Math.abs(v) / max, 1) * 50;
     const fill = el('div', { className: 'fill' });
     fill.style.background = v >= 0 ? 'var(--up)' : 'var(--down)';
     fill.style.width = `${ratio}%`;
@@ -1056,22 +1390,25 @@ function openDrawer(s) {
       el(
         'div',
         { className: 'spec' },
-        specRow('시가총액', money(s.cap), `시총 ${nf(s.capRank)}위`),
+        specRow(termLink('cap', '시가총액'), money(s.cap), `시총 ${nf(s.capRank)}위`),
         specRow('상장주식수', s.shares ? `${nf(s.shares)}주` : '–'),
-        specRow('거래대금', money(s.value)),
+        specRow(termLink('value', '거래대금'), money(s.value)),
         specRow('당일 고가 / 저가', `${nf(s.high)} / ${nf(s.low)}`),
         s.listedOn ? specRow('상장일', s.listedOn) : null,
       ),
     ),
   );
 
-  // 수익률
+  // 주가 흐름 차트 (자료는 열릴 때 한 번만 받아 온다)
+  scroll.append(chartSection(s));
+
+  // 기간 수익률
   scroll.append(
     el(
       'div',
       { className: 'dsection' },
-      el('h4', { textContent: '기간 수익률' }),
-      el('div', { className: 'retbars' }, retBar('1개월', s.ret?.[30]), retBar('3개월', s.ret?.[90]), retBar('1년', s.ret?.[365])),
+      el('h4', {}, el('span', { textContent: '기간 수익률' }), termLink('momentum', '?')),
+      el('div', { className: 'retbars' }, RET_PERIODS.map((p) => retBar(p.label, p.get(s), p.max))),
       el('p', {
         className: 'hint',
         textContent: '액면분할·유상증자는 보정하지 않은 단순 종가 비교입니다. 그런 일이 있었던 종목은 실제와 다릅니다.',
@@ -1089,14 +1426,14 @@ function openDrawer(s) {
       el(
         'div',
         { className: 'spec' },
-        specRow('PER', s.per == null ? (f?.netIncome <= 0 ? '적자' : '–') : `${nf(s.per, 2)}배`, '시가총액 ÷ 당기순이익'),
-        specRow('PBR', s.pbr == null ? '–' : `${nf(s.pbr, 2)}배`, '시가총액 ÷ 자본총계'),
-        specRow('PSR', s.psr == null ? '–' : `${nf(s.psr, 2)}배`, '시가총액 ÷ 매출액'),
-        specRow('ROE', s.roe == null ? '–' : signed(s.roe, 1), '당기순이익 ÷ 자본총계'),
-        specRow('영업이익률', s.opm == null ? '–' : pct(s.opm, 1), '영업이익 ÷ 매출액'),
-        specRow('부채비율', s.debt == null ? '–' : pct(s.debt, 0), '부채총계 ÷ 자본총계'),
+        specRow(termLink('per', 'PER'), s.per == null ? (f?.netIncome <= 0 ? '적자' : '–') : `${nf(s.per, 2)}배`, '시가총액 ÷ 당기순이익'),
+        specRow(termLink('pbr', 'PBR'), s.pbr == null ? '–' : `${nf(s.pbr, 2)}배`, '시가총액 ÷ 자본총계'),
+        specRow(termLink('psr', 'PSR'), s.psr == null ? '–' : `${nf(s.psr, 2)}배`, '시가총액 ÷ 매출액'),
+        specRow(termLink('roe', 'ROE'), s.roe == null ? '–' : signed(s.roe, 1), '당기순이익 ÷ 자본총계'),
+        specRow(termLink('opm', '영업이익률'), s.opm == null ? '–' : pct(s.opm, 1), '영업이익 ÷ 매출액'),
+        specRow(termLink('debt', '부채비율'), s.debt == null ? '–' : pct(s.debt, 0), '부채총계 ÷ 자본총계'),
         specRow(
-          '배당수익률',
+          termLink('divYield', '배당수익률'),
           s.divYield == null ? '–' : s.divSuspect ? divSuspectMark(s) : pct(s.divYield),
           f?.dps
             ? s.divSuspect
@@ -1104,7 +1441,7 @@ function openDrawer(s) {
               : `주당 ${nf(f.dps)}원 ÷ 현재가`
             : '배당 기록 없음',
         ),
-        specRow('배당성향', s.payout == null ? '–' : pct(s.payout, 0), '배당총액 ÷ 당기순이익'),
+        specRow(termLink('payout', '배당성향'), s.payout == null ? '–' : pct(s.payout, 0), '배당총액 ÷ 당기순이익'),
       ),
     ),
   );
@@ -1119,12 +1456,12 @@ function openDrawer(s) {
         el(
           'div',
           { className: 'spec' },
-          specRow('매출액', money(f.revenue), s.revGrowth == null ? '' : `전년 대비 ${nf(s.revGrowth, 1)}%`),
-          specRow('영업이익', money(f.operatingIncome)),
-          specRow('당기순이익', money(f.netIncome), s.profitGrowth == null ? '' : `전년 대비 ${nf(s.profitGrowth, 1)}%`),
+          specRow(termLink('revenue', '매출액'), money(f.revenue), s.revGrowth == null ? '' : `전년 대비 ${nf(s.revGrowth, 1)}%`),
+          specRow(termLink('operatingIncome', '영업이익'), money(f.operatingIncome)),
+          specRow(termLink('netIncome', '당기순이익'), money(f.netIncome), s.profitGrowth == null ? '' : `전년 대비 ${nf(s.profitGrowth, 1)}%`),
           specRow('자산총계', money(f.assets)),
           specRow('부채총계', money(f.liabilities)),
-          specRow('자본총계', money(f.equity)),
+          specRow(termLink('equity', '자본총계'), money(f.equity)),
         ),
       ),
     );
@@ -1740,7 +2077,13 @@ function buildSliders() {
       return el(
         'div',
         { className: 'slider-row' },
-        el('div', { className: 'name' }, el('span', { textContent: axis.label }), el('small', { textContent: axis.note })),
+        el(
+          'div',
+          { className: 'name' },
+          // 축 이름을 누르면 그 지표가 무엇인지 설명이 뜬다
+          axis.term ? termLink(axis.term, axis.label) : el('span', { textContent: axis.label }),
+          el('small', { textContent: axis.note }),
+        ),
         val,
         input,
       );
@@ -2070,6 +2413,7 @@ function exportCsv() {
       case 'debt': return s.debt;
       case 'revGrowth': return s.revGrowth;
       case 'ret90': return s.ret?.[90];
+      case 'ret365': return s.ret?.[365];
       case 'mine': return noteOf(s.code)?.rating;
       case 'qty': return noteOf(s.code)?.qty;
       case 'pl': return position(s)?.pl;
@@ -2142,6 +2486,7 @@ function goHome() {
   $('#drawer').hidden = true;
   $('#compareView').hidden = true;
   $('#folioView').hidden = true;
+  $('#glossaryView').hidden = true;
   $('#search').value = '';
   $('#compactMode').checked = false;
   document.body.classList.remove('compact');
@@ -2204,6 +2549,7 @@ async function main() {
     recompute();
   };
   $('#myFolio').onclick = openFolio;
+  $('#glossary').onclick = openGlossary;
 
   applyViewMode();
 
@@ -2259,7 +2605,8 @@ async function main() {
       if (!$('#drawer').hidden) {
         $('#drawer').hidden = true;
         document.querySelectorAll('#tableWrap .open').forEach((r) => r.classList.remove('open'));
-      } else if (!$('#folioView').hidden) $('#folioView').hidden = true;
+      } else if (!$('#glossaryView').hidden) $('#glossaryView').hidden = true;
+      else if (!$('#folioView').hidden) $('#folioView').hidden = true;
       else if (!$('#compareView').hidden) $('#compareView').hidden = true;
     }
     if (e.key === '/' && document.activeElement !== $('#search')) {

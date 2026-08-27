@@ -1303,6 +1303,170 @@ body.compact .name-cell .code {
   text-align: right;
 }
 
+/* ── 가격 차트 ──────────────────────────────────────── */
+.dsection h4 {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+}
+
+.dsection h4 .chips {
+  gap: 3px;
+}
+
+.dsection h4 .chips button {
+  font-size: 11px;
+  padding: 2px 7px;
+}
+
+.chart-host {
+  margin-top: 4px;
+}
+
+.pricechart {
+  display: block;
+  height: 190px;
+  overflow: visible;
+  width: 100%;
+}
+
+.pricechart .line {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+  vector-effect: non-scaling-stroke;
+}
+
+.pricechart .area {
+  opacity: 0.1;
+  stroke: none;
+}
+
+.pricechart .grid {
+  stroke: var(--border);
+  stroke-dasharray: 3 3;
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.pricechart .axis {
+  fill: var(--text-dim);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pricechart .axis.dim {
+  font-size: 9px;
+  opacity: 0.75;
+}
+
+.pricechart .hover-line {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.chart-readout {
+  align-items: baseline;
+  border-top: 1px dashed var(--border);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-top: 6px;
+  padding-top: 7px;
+}
+
+.chart-readout .when {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart-readout .what {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+/* ── 용어 설명 ──────────────────────────────────────── */
+/* 지표 이름에 붙는 점선 밑줄. 누르면 뜻이 뜬다. */
+.term {
+  background: none;
+  border: 0;
+  border-bottom: 1px dotted var(--text-dim);
+  color: inherit;
+  cursor: help;
+  font: inherit;
+  padding: 0;
+}
+
+.term:hover {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+}
+
+.term-box {
+  max-width: 460px;
+}
+
+.term-short {
+  color: var(--text);
+  font-size: 13.5px;
+  margin: 0 0 8px;
+}
+
+.term-calc {
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  margin: 0 0 10px;
+  padding: 7px 10px;
+}
+
+.term-block {
+  margin-top: 10px;
+}
+
+.term-block h5 {
+  color: var(--text-dim);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 0 0 3px;
+}
+
+.term-block p {
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+/* 함정은 눈에 띄어야 한다 — 이 사전에서 가장 중요한 줄이다 */
+.term-block.trap {
+  border-left: 3px solid var(--flag-want);
+  padding-left: 10px;
+}
+
+.term-block.trap h5 {
+  color: var(--flag-want);
+}
+
+.term-card > h4 {
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  margin: 0;
+  padding: 12px 15px;
+}
+
+.term-card-body {
+  padding: 13px 15px 15px;
+}
+
 .links {
   display: flex;
   flex-wrap: wrap;

@@ -6,9 +6,10 @@
   "description": "KRX·DART 공개 데이터를 내가 정한 기준으로 다시 정렬하는 주식 랭킹 도구",
   "scripts": {
     "sync:prices": "node scripts/sync-prices.mjs",
+    "sync:history": "node scripts/sync-history.mjs",
     "sync:financials": "node scripts/sync-financials.mjs",
     "build": "node scripts/build.mjs",
-    "sync": "npm run sync:prices && npm run sync:financials && npm run build",
+    "sync": "npm run sync:prices && npm run sync:history && npm run sync:financials && npm run build",
     "sample": "node scripts/make-sample.mjs",
     "dev": "node scripts/serve.mjs"
   },

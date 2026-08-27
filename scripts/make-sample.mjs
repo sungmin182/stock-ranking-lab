@@ -130,10 +130,14 @@ function makeStock(i) {
     cap,
     capRank: 0,
     shares,
+    // 기간이 길수록 흔들림도 커지게 둔다 — 1일과 5년이 같은 폭이면 어색하다
     ret: {
+      7: round1(between(-7, 8)),
       30: round1(between(-22, 26)),
       90: round1(between(-38, 55)),
+      180: round1(between(-45, 80)),
       365: round1(between(-55, 130)),
+      1825: round1(between(-80, 400)),
     },
 
     fin: {
@@ -178,9 +182,53 @@ await writeJson('data/stocks.json', {
   stocks,
 });
 
+/* ── 차트용 과거 종가 ──────────────────────────────────────
+ * 실물(sync-history.mjs)과 같은 모양으로 만든다 — 오래된 쪽은 월 단위,
+ * 최근 반년은 주 단위로 촘촘하게. 값은 오늘 종가에서 거꾸로 걸어간
+ * 임의 보행이라, 선이 자연스럽게 흔들리면서 끝점은 시세와 맞는다.
+ */
+const WEEKLY_WEEKS = 26;
+const MONTHLY_MONTHS = 54;
+
+const backDays = (() => {
+  const days = new Set();
+  for (let w = 0; w <= WEEKLY_WEEKS; w++) days.add(w * 7);
+  const firstMonth = Math.ceil((WEEKLY_WEEKS * 7) / 30) + 1;
+  for (let m = firstMonth; m < firstMonth + MONTHLY_MONTHS; m++) days.add(m * 30);
+  return [...days].sort((a, b) => b - a);
+})();
+
+const today = new Date();
+const dates = backDays.map((b) => {
+  const d = new Date(today);
+  d.setDate(d.getDate() - b);
+  return d.toISOString().slice(0, 10);
+});
+
+const history = {};
+for (const s of stocks) {
+  // 끝(오늘)에서 시작해 과거로 거슬러 올라가며 흔든 뒤 뒤집는다
+  const back = [s.close];
+  for (let i = 1; i < dates.length; i++) {
+    const step = 1 + between(-0.07, 0.07);
+    back.push(Math.max(50, Math.round((back[i - 1] / step) / 10) * 10));
+  }
+  history[s.code] = back.reverse();
+}
+
+await writeJson('data/history.json', {
+  sample: true,
+  source: '예시 데이터 (scripts/make-sample.mjs 가 지어낸 값)',
+  note: '수정주가가 아닙니다 — 액면분할·병합은 보정되지 않았습니다',
+  dates,
+  count: Object.keys(history).length,
+  stocks: history,
+});
+
 console.log(
   [
     `data/stocks.json — 예시 ${stocks.length}종목`,
+    `data/history.json — 예시 ${Object.keys(history).length}종목 × ${dates.length}지점 (${dates[0]} ~ ${dates[dates.length - 1]})`,
     '',
     '⚠ 실재하지 않는 회사와 지어낸 숫자입니다. 화면 위에 경고 띠가 뜹니다.',
     '  진짜 데이터를 받으려면 KRX_API_KEY / DART_API_KEY 를 넣고 npm run sync 하세요.',
