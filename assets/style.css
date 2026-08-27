@@ -934,6 +934,14 @@ body.compact .name-cell .code {
 .score-pill.t4 { background: var(--tier-4); color: var(--on-fill); }
 .score-pill.t5 { background: var(--tier-5); color: var(--on-fill); }
 
+/* 그대로 믿기 어려운 값. 지우지 않고 눈에 띄게만 둔다. */
+.suspect {
+  border-bottom: 1px dotted var(--flag-want);
+  color: var(--flag-want);
+  cursor: help;
+  font-weight: 600;
+}
+
 .up { color: var(--up); }
 .down { color: var(--down); }
 .flat { color: var(--flat); }

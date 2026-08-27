@@ -83,6 +83,26 @@ async function main() {
     const payout =
       f?.dps && f.netIncome > 0 && s.shares ? ((f.dps * s.shares) / f.netIncome) * 100 : null;
 
+    /*
+     * 그대로 믿기 어려운 배당률인가.
+     *
+     * DPS 는 1년 전 사업보고서 값인데 주가는 오늘 값이다. 그 사이 액면분할·
+     * 무상증자가 있었거나 특별배당이 한 번 섞이면 이 비율이 깨진다.
+     * 전체 분포는 중앙값 2.5% · 90퍼센타일 6% 인데 아홉 종목만 19~42% 로 튀어,
+     * 하필 '배당주' 정렬의 맨 위를 그것들이 차지했다.
+     *
+     * ── 배당성향은 기준으로 쓰지 않는다 ──────────────────
+     * 처음에는 "배당성향 200% 초과" 도 함께 걸었는데 39종목이 잡혔다.
+     * 두산밥캣(배당률 2.78%)처럼 **배당률 자체는 멀쩡한** 종목이 대부분이었다.
+     * 순이익이 그 해 일시적으로 쪼그라들면 배당성향만 치솟기 때문이다.
+     * 그건 배당률이 틀렸다는 신호가 아니라 그해 이익이 나빴다는 신호다.
+     * 그래서 "이 배당률을 믿을 수 있나" 만 본다.
+     *
+     * 값을 지우지는 않는다. 공시에서 나온 값이니 화면에는 그대로 보여 주되
+     * 표시를 달고, 점수 축에서만 '모름' 으로 쳐서 순위를 끌어올리지 못하게 한다.
+     */
+    const divSuspect = divYield != null && divYield > 15;
+
     stocks.push({
       code: s.code,
       name: s.name,
@@ -126,6 +146,8 @@ async function main() {
       debt: round(debt, 1),
       divYield: round(divYield),
       payout: round(payout, 1),
+      // 아홉 종목뿐이라 true 일 때만 넣는다. 전 종목에 false 를 실으면 파일만 커진다.
+      ...(divSuspect ? { divSuspect: true } : {}),
       revGrowth: round(growth(f?.revenue, f?.prevRevenue), 1),
       profitGrowth: round(growth(f?.netIncome, f?.prevNetIncome), 1),
     });
@@ -138,6 +160,7 @@ async function main() {
   const withFin = stocks.filter((s) => s.fin).length;
   const withPer = stocks.filter((s) => s.per != null).length;
   const withDiv = stocks.filter((s) => s.divYield != null).length;
+  const suspect = stocks.filter((s) => s.divSuspect).length;
 
   await writeJson('data/stocks.json', {
     date: prices.date,
@@ -151,7 +174,7 @@ async function main() {
   console.log(
     [
       `data/stocks.json — ${stocks.length.toLocaleString('ko-KR')}종목 (${prices.date} 기준)`,
-      `  재무 있음 ${withFin.toLocaleString('ko-KR')} · PER 산출 ${withPer.toLocaleString('ko-KR')} · 배당 ${withDiv.toLocaleString('ko-KR')}`,
+      `  재무 있음 ${withFin.toLocaleString('ko-KR')} · PER 산출 ${withPer.toLocaleString('ko-KR')} · 배당 ${withDiv.toLocaleString('ko-KR')} (확인 필요 ${suspect.toLocaleString('ko-KR')})`,
       `  업종 ${Object.keys(sectors).length}종`,
     ].join('\n'),
   );

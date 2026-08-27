@@ -102,8 +102,15 @@ const AXES = [
     key: 'divy',
     label: '배당',
     note: '배당수익률. 배당이 없는 회사는 0으로 친다',
-    // 재무는 있는데 배당 기록이 없으면 "안 준 것"이다. 재무 자체가 없으면 모르는 것.
-    value: (s) => s.divYield ?? (s.fin ? 0 : null),
+    /*
+     * 재무는 있는데 배당 기록이 없으면 "안 준 것"이다. 재무 자체가 없으면 모르는 것.
+     *
+     * divSuspect 는 배당성향 200% 초과처럼 그대로 이어질 수 없는 값이다
+     * (DPS 는 1년 전 공시, 주가는 오늘 — 그 사이 분할·특별배당이 끼면 깨진다).
+     * 화면에는 그대로 보여 주지만 여기서는 '모름'으로 쳐서 중간값을 받게 한다.
+     * 안 그러면 배당주 정렬의 맨 위를 그 몇 종목이 차지한다.
+     */
+    value: (s) => (s.divSuspect ? null : (s.divYield ?? (s.fin ? 0 : null))),
   },
   {
     key: 'safe',
@@ -548,6 +555,26 @@ function scorePill(score) {
   return el('span', { className: `score-pill t${tier}`, textContent: nf(score, 1) });
 }
 
+/**
+ * 그대로 믿기 어려운 배당률에 붙는 표시.
+ *
+ * 값을 감추지 않는다 — 공시에서 나온 숫자이므로 그대로 보여 주되,
+ * 왜 의심스러운지 마우스를 올리면 알 수 있게 한다.
+ * 점수 계산에서 빠진다는 것도 여기에 적는다(AXES 의 divy 참고).
+ */
+function divSuspectMark(s) {
+  return el('span', {
+    className: 'suspect',
+    textContent: `${pct(s.divYield)} ⚠`,
+    title:
+      '이례적으로 높은 배당률입니다 — 그대로 믿기 어렵습니다.\n' +
+      '주당배당금은 1년 전 사업보고서 값인데 주가는 최근 종가라,\n' +
+      '그 사이 액면분할·무상증자·특별배당이 있었으면 비율이 깨집니다.\n' +
+      (s.payout != null ? `(참고: 배당성향 ${nf(s.payout, 0)}%)\n` : '') +
+      '값은 그대로 보여 주지만 점수 계산에서는 빠집니다.',
+  });
+}
+
 function marketTag(market) {
   const cls = market === 'KOSPI' ? 'kospi' : market === 'KOSDAQ' ? 'kosdaq' : '';
   return el('span', { className: `tag ${cls}`, textContent: market ?? '–' });
@@ -676,7 +703,9 @@ function renderRow(s) {
         td = el('td', {}, s.roe == null ? el('span', { className: 'flat', textContent: '–' }) : signed(s.roe, 1));
         break;
       case 'divYield':
-        td = cell(s.divYield == null ? '–' : pct(s.divYield));
+        td = s.divSuspect
+          ? el('td', {}, divSuspectMark(s))
+          : cell(s.divYield == null ? '–' : pct(s.divYield));
         break;
       case 'debt':
         td = cell(s.debt == null ? '–' : pct(s.debt, 0));
@@ -1066,7 +1095,15 @@ function openDrawer(s) {
         specRow('ROE', s.roe == null ? '–' : signed(s.roe, 1), '당기순이익 ÷ 자본총계'),
         specRow('영업이익률', s.opm == null ? '–' : pct(s.opm, 1), '영업이익 ÷ 매출액'),
         specRow('부채비율', s.debt == null ? '–' : pct(s.debt, 0), '부채총계 ÷ 자본총계'),
-        specRow('배당수익률', s.divYield == null ? '–' : pct(s.divYield), f?.dps ? `주당 ${nf(f.dps)}원 ÷ 현재가` : '배당 기록 없음'),
+        specRow(
+          '배당수익률',
+          s.divYield == null ? '–' : s.divSuspect ? divSuspectMark(s) : pct(s.divYield),
+          f?.dps
+            ? s.divSuspect
+              ? `주당 ${nf(f.dps)}원 ÷ 현재가 · 확인 필요 (점수에서 제외)`
+              : `주당 ${nf(f.dps)}원 ÷ 현재가`
+            : '배당 기록 없음',
+        ),
         specRow('배당성향', s.payout == null ? '–' : pct(s.payout, 0), '배당총액 ÷ 당기순이익'),
       ),
     ),
