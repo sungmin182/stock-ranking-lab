@@ -127,7 +127,12 @@ jobs:
   # 초록 뱃지 뒤에서 자료가 조용히 늙는 것을 막는 장치다.
   report:
     needs: [sync, deploy]
-    if: always()
+    # sync 가 실제로 끝났을 때만 따진다.
+    #
+    # always() 만 걸었더니, 동시성 그룹에 밀려 취소된 실행에서도 이 잡이 돌아
+    # outputs 가 빈 문자열이라 "시세 수집이 실패했습니다" 를 띄웠다.
+    # 취소는 실패가 아니다 — 뒤이은 실행이 자리를 가져갔을 뿐이다.
+    if: always() && needs.sync.result != 'cancelled' && needs.sync.result != 'skipped'
     runs-on: ubuntu-latest
     steps:
       - name: 수집 실패 여부 확인
