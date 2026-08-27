@@ -150,7 +150,8 @@ async function fetchAccounts(corpCodes, year) {
   const url =
     `${BASE}/fnlttMultiAcnt.json?crtfc_key=${KEY}` +
     `&corp_code=${corpCodes.join(',')}&bsns_year=${year}&reprt_code=${ANNUAL}`;
-  const res = await get(url);
+  // 100개 회사를 한 번에 물으면 응답이 느리다. 실제로 기본 60초를 넘겨 죽은 적이 있다.
+  const res = await get(url, { timeout: 120_000 });
   // 013 = 조회된 데이터 없음. 오류가 아니라 "그 해 보고서가 없다"는 뜻이다.
   if (res.status !== '000') return [];
   return res.list ?? [];
@@ -202,8 +203,23 @@ async function fetchDividend(corp, year) {
   const url =
     `${BASE}/alotMatter.json?crtfc_key=${KEY}` +
     `&corp_code=${corp}&bsns_year=${year}&reprt_code=${ANNUAL}`;
-  const res = await get(url).catch(() => null);
-  if (!res || res.status !== '000') return null;
+
+  /*
+   * "배당을 안 줬다" 와 "물어보지 못했다" 는 다르다.
+   *
+   * 둘을 같이 null 로 처리했더니, 요청이 한 번 실패한 회사가 30일 동안
+   * "무배당" 으로 캐시에 박혔다. 실패는 undefined 로 돌려 캐시에 넣지 않고
+   * 다음 실행에서 다시 묻게 한다.
+   */
+  let res;
+  try {
+    res = await get(url);
+  } catch {
+    return undefined;
+  }
+  // 013 = 조회된 데이터 없음. 배당 공시 자체가 없다는 뜻이라 "무배당" 으로 친다.
+  if (res.status === '013') return null;
+  if (res.status !== '000') return undefined;
 
   for (const row of res.list ?? []) {
     const se = String(row.se ?? '').replace(/\s/g, '');
@@ -261,8 +277,25 @@ async function main() {
   for (let i = 0; i < stale.length; i += 100) batches.push(stale.slice(i, i + 100));
 
   let done = 0;
-  for (const batch of batches) {
-    const rows = await fetchAccounts(batch.map((t) => t.corp), year);
+  let failedBatches = 0;
+  for (const [i, batch] of batches.entries()) {
+    let rows;
+    try {
+      rows = await fetchAccounts(batch.map((t) => t.corp), year);
+    } catch (err) {
+      /*
+       * 묶음 하나가 실패해도 나머지는 받는다.
+       *
+       * 전에는 여기서 예외가 그대로 튀어나가 2,600종목을 다 받아 놓고도
+       * 마지막 묶음 하나 때문에 통째로 날렸다(DART 응답이 60초를 넘겼다).
+       * 실패한 묶음의 종목은 캐시에 안 들어가므로 다음 실행에서 저절로 다시 받는다.
+       */
+      failedBatches++;
+      console.warn(`\n  묶음 ${i + 1}/${batches.length} 실패(다음 실행에서 다시 받음): ${err.message.split('\n')[0]}`);
+      await sleep(1000);
+      continue;
+    }
+
     const byCorp = new Map();
     for (const r of rows) {
       if (!byCorp.has(r.corp_code)) byCorp.set(r.corp_code, []);
@@ -273,9 +306,13 @@ async function main() {
     }
     done += batch.length;
     process.stdout.write(`\r  ${done.toLocaleString('ko-KR')} / ${stale.length.toLocaleString('ko-KR')}`);
+
+    // 중간에 끊겨도 여기까지는 남는다
+    if ((i + 1) % 5 === 0) await writeJson(cacheFile, cache);
     await sleep(150);
   }
   if (batches.length) process.stdout.write('\n');
+  if (failedBatches) console.warn(`  묶음 ${failedBatches}개 실패 — 그만큼은 이번 결과에서 빠집니다`);
   await writeJson(cacheFile, cache);
 
   // ── 배당: 회사마다 한 번씩 ──────────────────────────────
@@ -285,9 +322,12 @@ async function main() {
   console.log(`배당 ${divStale.length.toLocaleString('ko-KR')}종목 갱신 (캐시 ${(targets.length - divStale.length).toLocaleString('ko-KR')})`);
 
   let dDone = 0;
+  let divFailed = 0;
   await pool(divStale, CONCURRENCY, async (t) => {
     const dps = await fetchDividend(t.corp, year);
-    divCache[t.code] = { at: Date.now(), dps };
+    // undefined = 물어보지 못했다. 캐시에 넣지 않아야 다음 실행에서 다시 묻는다.
+    if (dps === undefined) divFailed++;
+    else divCache[t.code] = { at: Date.now(), dps };
     dDone++;
     if (dDone % 50 === 0) {
       process.stdout.write(`\r  ${dDone.toLocaleString('ko-KR')} / ${divStale.length.toLocaleString('ko-KR')}`);
@@ -296,6 +336,7 @@ async function main() {
     }
   });
   if (divStale.length) process.stdout.write('\n');
+  if (divFailed) console.warn(`  배당 조회 ${divFailed.toLocaleString('ko-KR')}건 실패 — 다음 실행에서 다시 받습니다`);
   await writeJson(divCacheFile, divCache);
 
   // ── 합치기 ──────────────────────────────────────────────

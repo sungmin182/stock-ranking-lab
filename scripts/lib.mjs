@@ -15,14 +15,19 @@ export const UA =
  */
 const TIMEOUT_MS = 60_000;
 
-/** 지수 백오프 재시도가 붙은 fetch. asText 면 본문을 글자로, asBuf 면 바이트로 준다. */
-export async function get(url, { retries = 4, asText = false, asBuf = false, headers = {} } = {}) {
+/**
+ * 지수 백오프 재시도가 붙은 fetch. asText 면 본문을 글자로, asBuf 면 바이트로 준다.
+ *
+ * timeout 으로 이 요청만 더 오래 기다릴 수 있다. DART 의 다중회사 조회처럼
+ * 한 번에 100개 회사를 물으면 응답이 느려 기본값(60초)을 넘길 때가 있다.
+ */
+export async function get(url, { retries = 4, asText = false, asBuf = false, headers = {}, timeout = TIMEOUT_MS } = {}) {
   let lastErr;
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetch(url, {
         headers: { 'User-Agent': UA, Accept: '*/*', ...headers },
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeout),
       });
       if (res.status === 429 || res.status >= 500) {
         const err = new Error(`HTTP ${res.status}`);
