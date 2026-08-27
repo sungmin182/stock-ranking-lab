@@ -38,15 +38,52 @@ const CONCURRENCY = Number(process.env.CONCURRENCY ?? 3);
 /** 사업보고서. 반기·분기는 11012 / 11013 / 11014 */
 const ANNUAL = '11011';
 
-/** 계정과목명 → 우리가 쓰는 이름 */
-const ACCOUNTS = {
-  자산총계: 'assets',
-  부채총계: 'liabilities',
-  자본총계: 'equity',
-  매출액: 'revenue',
-  영업이익: 'operatingIncome',
-  당기순이익: 'netIncome',
-};
+/**
+ * 계정과목명 → 우리가 쓰는 이름.
+ *
+ * ── 이름을 정확히 맞추면 안 된다 ────────────────────────
+ * 처음에는 '당기순이익' 으로 정확히 같은 이름만 찾았는데, 2,623종목 전부에서
+ * 순이익이 비었다(매출·자본은 멀쩡히 들어왔다). DART 는 회사마다 표기가 달라
+ * '당기순이익(손실)' 처럼 괄호를 붙여 오기 때문이다. PER 과 ROE 가 둘 다
+ * 순이익으로 계산되므로 이 한 줄 때문에 두 지표가 통째로 비었다.
+ *
+ * 그래서 이름이 같거나 **뒤에 괄호만 붙은 경우**까지 잡는다.
+ * 금융사가 '매출액' 대신 쓰는 '영업수익' 도 같이 받는다.
+ */
+const ACCOUNTS = [
+  ['assets', ['자산총계']],
+  ['liabilities', ['부채총계']],
+  ['equity', ['자본총계']],
+  ['revenue', ['매출액', '영업수익']],
+  ['operatingIncome', ['영업이익']],
+  ['netIncome', ['당기순이익', '반기순이익', '분기순이익']],
+];
+
+/**
+ * 계정과목명을 우리 이름으로 바꾼다. 못 알아보면 null.
+ * exact 가 true 면 괄호 변형이 아니라 이름이 정확히 같았다는 뜻이다.
+ */
+function accountKey(name) {
+  // 공백을 없애고, 공시에 섞여 들어오는 전각 괄호를 반각으로 맞춘다
+  const n = String(name ?? '')
+    .replace(/\s/g, '')
+    .replace(/（/g, '(')
+    .replace(/）/g, ')');
+  for (const [key, heads] of ACCOUNTS) {
+    for (const h of heads) {
+      if (n === h) return { key, exact: true };
+      // '당기순이익(손실)' 은 받고 '법인세차감전순이익' 은 안 받는다
+      if (n.startsWith(`${h}(`)) return { key, exact: false };
+    }
+  }
+  return null;
+}
+
+/**
+ * 알아보지 못한 계정과목명. 매칭이 또 어긋났을 때 무엇을 놓쳤는지 알려면
+ * 실물 이름이 필요한데, 한 번 돌리는 데 시간이 걸려 그때그때 못 본다.
+ */
+const unknownAccounts = new Map();
 
 if (!KEY) {
   console.error(
@@ -128,15 +165,30 @@ async function fetchAccounts(corpCodes, year) {
 function reduceAccounts(rows) {
   const out = { fs: null };
   const preferred = rows.some((r) => r.fs_div === 'CFS') ? 'CFS' : 'OFS';
+  // 어느 항목이 정확한 이름으로 들어왔는지. 괄호 변형이 정확한 값을 덮지 않게 한다.
+  const exactly = new Set();
+
   for (const r of rows) {
     if (r.fs_div !== preferred) continue;
-    const key = ACCOUNTS[String(r.account_nm ?? '').replace(/\s/g, '')];
-    if (!key) continue;
+    const hit = accountKey(r.account_nm);
+    if (!hit) {
+      const nm = String(r.account_nm ?? '').trim();
+      if (nm) unknownAccounts.set(nm, (unknownAccounts.get(nm) ?? 0) + 1);
+      continue;
+    }
+    /*
+     * '당기순이익' 과 '당기순이익(지배기업 소유주지분)' 이 함께 오는 회사가 있다.
+     * 우리가 쓰려는 것은 전체 순이익이므로, 정확한 이름을 이미 받았으면
+     * 괄호가 붙은 쪽으로 덮어쓰지 않는다.
+     */
+    if (exactly.has(hit.key) && !hit.exact) continue;
+    if (hit.exact) exactly.add(hit.key);
+
     out.fs = preferred;
-    out[key] = num(r.thstrm_amount);
+    out[hit.key] = num(r.thstrm_amount);
     // 전기 값은 성장률 계산에 쓴다
     const prev = num(r.frmtrm_amount);
-    if (prev != null) out[`prev_${key}`] = prev;
+    if (prev != null) out[`prev_${hit.key}`] = prev;
   }
   return out;
 }
@@ -189,7 +241,15 @@ async function main() {
     .filter((t) => t.corp);
   console.log(`대상 ${targets.length.toLocaleString('ko-KR')}종목 (전체 ${prices.stocks.length.toLocaleString('ko-KR')})`);
 
-  const cacheFile = path.join(CACHE, `fin-${year}.json`);
+  /*
+   * 캐시에는 원본이 아니라 "해석이 끝난 값" 이 들어간다. 그래서 해석 방식을
+   * 고치면 옛 캐시를 그대로 쓰는 한 고친 것이 반영되지 않는다 — 실제로
+   * 순이익 매칭을 고치고도 캐시 때문에 그대로 비어 있을 뻔했다.
+   * 파일 이름에 번호를 넣어, 아래 번호를 올리면 저절로 다시 받게 한다.
+   * (배당 캐시는 해석이 따로라 건드리지 않는다. 2,600건을 다시 받으면 한 시간이다.)
+   */
+  const PARSE_VERSION = 2;
+  const cacheFile = path.join(CACHE, `fin-${year}-v${PARSE_VERSION}.json`);
   const cache = (await readJson(cacheFile)) ?? {};
   const fresh = (code) => cache[code] && Date.now() - cache[code].at < TTL_MS;
 
@@ -273,6 +333,34 @@ async function main() {
     stocks: out,
   });
   console.log(`\ndata/financials.json — 재무 ${withFs.toLocaleString('ko-KR')}종목 · 배당 ${withDiv.toLocaleString('ko-KR')}종목`);
+
+  /*
+   * 항목별로 몇 종목이나 채워졌는지 찍는다.
+   *
+   * "재무 2,623종목" 만 보고 넘어갔다가 순이익이 0종목인 것을 배포 뒤에야
+   * 알았다. 계정 이름 하나가 어긋나면 그 줄만 조용히 비는데, 합계만 보면
+   * 멀쩡해 보인다. 항목별로 세어 두면 다음에는 로그에서 바로 걸린다.
+   */
+  const rows = Object.values(out);
+  const coverage = ['revenue', 'operatingIncome', 'netIncome', 'assets', 'liabilities', 'equity', 'dps'];
+  console.log('  항목별 채워진 종목 수:');
+  const missing = [];
+  for (const k of coverage) {
+    const n = rows.filter((r) => r[k] != null).length;
+    console.log(`    ${k.padEnd(17)} ${n.toLocaleString('ko-KR')}`);
+    // 배당은 원래 주는 회사만 있다. 나머지가 거의 비면 매칭이 어긋난 것이다.
+    if (k !== 'dps' && withFs > 0 && n < withFs * 0.5) missing.push(k);
+  }
+
+  if (missing.length) {
+    console.warn(`\n⚠ ${missing.join(', ')} 가 절반도 안 채워졌습니다 — 계정과목명 매칭이 어긋났을 수 있습니다.`);
+    const top = [...unknownAccounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 25);
+    if (top.length) {
+      console.warn('  DART 가 준 이름 중 알아보지 못한 것 (많은 순):');
+      for (const [nm, n] of top) console.warn(`    ${String(n).padStart(6)}회  ${nm}`);
+      console.warn('  이 목록에서 찾는 항목을 골라 ACCOUNTS 에 추가하세요.');
+    }
+  }
 }
 
 await main();
