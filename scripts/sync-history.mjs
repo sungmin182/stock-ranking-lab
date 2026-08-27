@@ -25,13 +25,26 @@
  *   화면에도 그렇게 적어 두었다.
  */
 import { writeJson, ymd, ymd8, daysAgo, sleep } from './lib.mjs';
-import { MARKETS, requireKey, fetchNearestTradingDay, codeOf, pick, explain } from './krx.mjs';
+import { MARKETS, requireKey, fetchNearestTradingDay, codeOf, pick, explain, isPermanent } from './krx.mjs';
 import { num } from './lib.mjs';
 
 /** 최근 몇 주를 주 단위로 볼지 */
 const WEEKLY_WEEKS = 26;
 /** 그 이전 몇 개월을 월 단위로 볼지 */
 const MONTHLY_MONTHS = 54;
+
+/*
+ * 한 번에 새로 받을 수 있는 지점 수와 호출 사이 간격.
+ *
+ * KRX 는 호출이 몰리면 403 을 돌려준다. 81지점 × 시장 3개를 한 번에 받으려다
+ * 실제로 맞았다. 캐시가 날짜별이라 진도는 실행을 거듭하며 저절로 쌓이므로,
+ * 한 실행에서 무리하지 않고 조금씩 받는 편이 결국 빠르다.
+ *
+ * 평일 저녁마다 도니 며칠이면 5년치가 다 찬다. 그 뒤로는 새 지점이 한 주에
+ * 하나씩만 생기므로 늘 캐시에서 나온다.
+ */
+const MAX_NEW_FETCHES = Number(process.env.MAX_NEW_FETCHES ?? 60);
+const PACE_MS = Number(process.env.PACE_MS ?? 700);
 
 requireKey('npm run sync:history');
 
@@ -54,6 +67,9 @@ async function main() {
   const series = new Map();
   const skipped = new Set();
 
+  let fetched = 0; // 이번 실행에서 실제로 KRX 를 때린 횟수
+  let quotaHit = false;
+
   for (const [i, back] of days.entries()) {
     const target = daysAgo(back);
     const snap = new Map();
@@ -61,23 +77,34 @@ async function main() {
 
     for (const market of MARKETS) {
       if (skipped.has(market.id)) continue;
+      if (fetched >= MAX_NEW_FETCHES) continue; // 캐시에 있는 것만 마저 훑는다
       try {
-        const { dd, rows } = await fetchNearestTradingDay(market, target, { quiet: true });
+        const { dd, rows, fromCache } = await fetchNearestTradingDay(market, target, { quiet: true });
+        if (!fromCache) fetched++;
         label ??= dd;
         for (const raw of rows) {
           const code = codeOf(raw);
           const close = num(pick(raw, 'TDD_CLSPRC'));
           if (code && close) snap.set(code, close);
         }
+        if (!fromCache) await sleep(PACE_MS);
       } catch (err) {
         /*
-         * 권한이 없는 시장(코넥스처럼 승인 안 된 것)은 한 번 걸리면 계속 걸린다.
-         * 지점마다 401 을 맞으면 85번 × 시장 수만큼 헛돌므로 한 번 보고 접는다.
+         * 401(권한 없음)은 다시 물어도 같은 답이라 그 시장은 접는다 — 코넥스처럼
+         * 승인 안 된 시장에서 81번을 헛돌 이유가 없다.
+         *
+         * 403 은 다르다. 호출이 몰렸다는 뜻이라 다음 실행에서는 받아진다.
+         * 전에는 이것도 시장 전체를 접는 데 썼더니, 첫 지점에서 403 한 번 맞고
+         * 81지점을 통째로 날렸다. 이제는 그 지점만 건너뛴다.
          */
-        console.warn(`  ${market.id} 이후 건너뜀 — ${explain(err)}`);
-        skipped.add(market.id);
+        if (isPermanent(err)) {
+          console.warn(`  ${market.id} 이후 건너뜀 — ${explain(err)}`);
+          skipped.add(market.id);
+        } else {
+          if (!quotaHit) console.warn(`\n  ${explain(err)}`);
+          quotaHit = true;
+        }
       }
-      await sleep(120);
     }
 
     if (!snap.size) continue;
@@ -116,6 +143,11 @@ async function main() {
     stocks,
   });
 
+  if (quotaHit || fetched >= MAX_NEW_FETCHES) {
+    console.log(
+      `이번 실행에서 새로 받은 지점 ${fetched}개 · 아직 ${days.length - dates.length}개 남음 — 다음 실행에서 이어 받습니다`,
+    );
+  }
   console.log(
     `data/history.json — ${Object.keys(stocks).length.toLocaleString('ko-KR')}종목 × ${dates.length}지점 (${dates[0]} ~ ${dates[dates.length - 1]})`,
   );

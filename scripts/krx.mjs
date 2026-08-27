@@ -62,11 +62,13 @@ export async function fetchNearestTradingDay(market, from, { quiet = false } = {
     const dd = ymd8(d);
     const cached = await readJson(path.join(CACHE, `${market.id}-${dd}.json`));
     if (cached) {
-      if (cached.length) return { dd, rows: cached };
+      // fromCache 는 부르는 쪽이 "이번 실행에서 실제로 몇 번 KRX 를 때렸는지"
+      // 세는 데 쓴다. 호출량 제한이 있어 한 번에 다 받으려 하면 403 이 난다.
+      if (cached.length) return { dd, rows: cached, fromCache: true };
     } else {
       const rows = await fetchDay(market, dd);
       await writeJson(path.join(CACHE, `${market.id}-${dd}.json`), rows);
-      if (rows.length) return { dd, rows };
+      if (rows.length) return { dd, rows, fromCache: false };
       if (!quiet) console.log(`  ${dd} 휴장 — 하루 앞으로`);
       await sleep(120);
     }
@@ -144,5 +146,14 @@ export function explain(err) {
     return '이 API 를 쓸 권한이 인증키에 없습니다 — openapi.krx.co.kr 에서 해당 서비스 사용 신청이 승인됐는지 확인하세요 (인증키 발급과 별개입니다)';
   }
   if (err.status === 401) return '인증키가 없거나 틀렸습니다 (KRX_API_KEY 확인)';
+  /*
+   * 403 은 권한이 아니라 호출량 문제로 보인다. 한 번에 200번 넘게 부르니
+   * 성공과 403 이 뒤섞여 나왔고, 잠시 쉬었다 부르면 다시 받아졌다.
+   * 재시도는 lib.mjs 의 get() 이 알아서 하고, 그래도 안 되면 여기까지 온다.
+   */
+  if (err.status === 403) return '호출이 몰려 KRX 가 거절했습니다(403) — 다음 실행에서 이어 받습니다';
   return err.message.split('\n')[0];
 }
+
+/** 401(권한 없음)처럼 다시 시도해도 소용없는 오류인가 */
+export const isPermanent = (err) => err.status === 401;

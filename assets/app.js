@@ -1209,6 +1209,18 @@ function chartSection(s) {
       setChildren(host, el('p', { className: 'hint', textContent: '과거 종가 자료가 아직 없습니다. npm run sync:history 로 받을 수 있습니다.' }));
       return;
     }
+    /*
+     * 예시 차트와 진짜 시세가 섞이지 않게 한다.
+     *
+     * 저장소에는 예시 history.json 이 커밋돼 있는데, 시세 수집은 성공하고
+     * 과거 종가 수집만 실패하면 진짜 종목 옆에 예시 차트가 배포된다.
+     * 종목코드가 달라 엉뚱한 선이 그려지지는 않았지만, 애초에 짝이 안 맞는
+     * 자료를 붙들고 있을 이유가 없다.
+     */
+    if (!!h.sample !== !!state.data.sample) {
+      setChildren(host, el('p', { className: 'hint', textContent: '차트 자료와 시세 자료의 짝이 맞지 않아 표시하지 않습니다.' }));
+      return;
+    }
     const series = h.stocks?.[s.code];
     if (!series) {
       setChildren(host, el('p', { className: 'hint', textContent: '이 종목의 과거 종가가 없습니다(최근 상장이면 그럴 수 있습니다).' }));

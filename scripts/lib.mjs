@@ -29,11 +29,21 @@ export async function get(url, { retries = 4, asText = false, asBuf = false, hea
         headers: { 'User-Agent': UA, Accept: '*/*', ...headers },
         signal: AbortSignal.timeout(timeout),
       });
-      if (res.status === 429 || res.status >= 500) {
+      /*
+       * 403 도 재시도한다.
+       *
+       * 보통 403 은 "권한 없음" 이라 다시 물어도 소용없지만, KRX 오픈API 는
+       * 호출이 몰리면 403 을 돌려준다. 실제로 차트용 과거 시세를 받다가
+       * 성공과 403 이 섞여 나왔고, 4xx 를 즉시 포기하도록 두었더니 그 지점의
+       * 자료가 통째로 비었다. 권한 문제라면 몇 번 더 물어도 같은 답이 오므로
+       * 재시도해서 손해 볼 것은 시간뿐이다.
+       */
+      if (res.status === 429 || res.status === 403 || res.status >= 500) {
         const err = new Error(`HTTP ${res.status}`);
         const after = Number(res.headers.get('retry-after'));
         if (Number.isFinite(after) && after > 0) err.retryAfterMs = after * 1000;
-        err.throttled = res.status === 429;
+        err.throttled = res.status === 429 || res.status === 403;
+        err.status = res.status;
         throw err;
       }
       if (!res.ok) {
@@ -48,7 +58,8 @@ export async function get(url, { retries = 4, asText = false, asBuf = false, hea
       return asText ? await res.text() : await res.json();
     } catch (err) {
       lastErr = err;
-      if (err.status && err.status >= 400 && err.status < 500) throw err;
+      // 400~499 는 다시 물어도 같은 답이다. 단 위에서 throttled 로 표시한 것(403·429)은 예외다.
+      if (!err.throttled && err.status && err.status >= 400 && err.status < 500) throw err;
       if (attempt === retries) break;
       const base = err.throttled ? 4000 : 500;
       await sleep(err.retryAfterMs ?? base * 2 ** attempt + Math.random() * 300);
